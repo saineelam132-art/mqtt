@@ -75,10 +75,33 @@
     🔒 System is in Security Mode — enter the secret code below to view data.
   </div>
 
-  <!-- Live Meters Panel -->
+  <!-- System Status Panel (message-type topics: status/fault_distance/relay) -->
+  <section class="card" id="systemStatusCard">
+    <h2>System Status</h2>
+    <div class="status-grid">
+      <div class="status-item">
+        <span class="status-item-label">Status</span>
+        <span class="status-badge" id="statusBadge">—</span>
+      </div>
+      <div class="status-item">
+        <span class="status-item-label">Fault Distance</span>
+        <span class="status-value" id="faultDistanceValue">—</span>
+      </div>
+      <div class="status-item">
+        <span class="status-item-label">Relay</span>
+        <span class="relay-indicator">
+          <span class="relay-dot" id="relayDot"></span>
+          <span id="relayText">—</span>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Live Meters Panel: one gauge visible at a time, chosen via tabs -->
   <section class="card" id="liveMetersCard">
     <h2>Live Meters</h2>
-    <div class="gauge-grid" id="gaugeGrid"></div>
+    <div class="gauge-tabs" id="gaugeTabs"></div>
+    <div class="gauge-single-wrap" id="gaugeSingle"></div>
   </section>
 
   <!-- Subscriptions Panel -->

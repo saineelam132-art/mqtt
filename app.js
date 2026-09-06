@@ -11,6 +11,7 @@
   const STATUS_TOPIC = "mahesh01/transmission/status";
   const FAULT_CURRENT_TOPIC = "mahesh01/transmission/fault_current";
   const FAULT_DISTANCE_TOPIC = "mahesh01/transmission/fault_distance";
+  const RELAY_TOPIC = "mahesh01/transmission/relay";
   const AUTH_TOPIC = "mahesh01/auth";
   const SECURITY_TOPICS = [STATUS_TOPIC, FAULT_CURRENT_TOPIC, FAULT_DISTANCE_TOPIC];
   const UNLOCKED_STATUS_VALUES = new Set([
@@ -42,7 +43,7 @@
     "mahesh01/transmission/power": "W",
     "mahesh01/transmission/energy": "kWh",
     "mahesh01/transmission/cost": "₹",
-    "mahesh01/transmission/fault_distance": "m",
+    "mahesh01/transmission/fault_distance": "cm",
   };
 
   const MAX_LOG_MESSAGES = 20;
@@ -72,13 +73,21 @@
     { from: 0, to: 0.5 / 3, color: "#34d399" },
     { from: 0.5 / 3, to: 1, color: "#f87171" },
   ];
+  // No fault threshold for these — a gentle informational gradient, not a risk band.
+  const INFO_ZONES = [
+    { from: 0, to: 0.8, color: "#34d399" },
+    { from: 0.8, to: 1, color: "#22d3ee" },
+  ];
 
+  // Order here also drives the gauge selector tab order.
   const GAUGE_CONFIGS = [
     { topic: "mahesh01/transmission/input_voltage", label: "Input Voltage", min: 0, max: 15, unit: "V", zones: DEFAULT_ZONES },
     { topic: "mahesh01/transmission/load_voltage", label: "Load Voltage", min: 0, max: 15, unit: "V", zones: DEFAULT_ZONES },
-    { topic: "mahesh01/transmission/load_current", label: "Load Current", min: 0, max: 3, unit: "A", zones: DEFAULT_ZONES },
     { topic: "mahesh01/transmission/fault_current", label: "Fault Current", min: 0, max: 3, unit: "A", zones: FAULT_CURRENT_ZONES },
+    { topic: "mahesh01/transmission/load_current", label: "Load Current", min: 0, max: 3, unit: "A", zones: DEFAULT_ZONES },
     { topic: "mahesh01/transmission/power", label: "Power", min: 0, max: 50, unit: "W", zones: DEFAULT_ZONES },
+    { topic: "mahesh01/transmission/energy", label: "Energy", min: 0, max: 5, unit: "kWh", zones: INFO_ZONES },
+    { topic: "mahesh01/transmission/cost", label: "Cost", min: 0, max: 50, unit: "₹", zones: INFO_ZONES },
   ];
 
   // ---------------------------------------------------------------------
@@ -206,7 +215,13 @@
   const settingsForm = el("settingsForm");
 
   const securityBanner = el("securityBanner");
-  const gaugeGrid = el("gaugeGrid");
+  const gaugeTabs = el("gaugeTabs");
+  const gaugeSingle = el("gaugeSingle");
+
+  const statusBadge = el("statusBadge");
+  const faultDistanceValue = el("faultDistanceValue");
+  const relayDot = el("relayDot");
+  const relayText = el("relayText");
 
   const topicInput = el("topicInput");
   const addTopicBtn = el("addTopicBtn");
@@ -268,9 +283,10 @@
     isLocked: true,
     unlockedAt: null, // ms timestamp of the most recent unlock, for history filtering
     lastReceived: null, // { topic, value, time }
+    selectedGaugeTopic: GAUGE_CONFIGS[0].topic, // default: Input Voltage
   };
 
-  const gauges = {}; // topic -> gauge instance from createGauge()
+  let activeGauge = null; // the single mounted gauge instance
   const HISTORY_EMPTY_DEFAULT_TEXT = "No records for this topic yet.";
 
   // ---------------------------------------------------------------------
@@ -451,10 +467,16 @@
     updateDebugLastReceived(topic, payload, time);
     renderSubscriptions();
 
-    const gauge = gauges[topic];
-    if (gauge) {
+    // Only the currently-selected gauge is mounted; the other six topics
+    // keep updating state.latestByTopic silently in the background so
+    // switching back to them shows the current value, not a stale one.
+    if (activeGauge && topic === state.selectedGaugeTopic) {
       const num = parseFloat(payload);
-      if (!Number.isNaN(num)) gauge.setValue(num);
+      if (!Number.isNaN(num)) activeGauge.setValue(num);
+    }
+
+    if (topic === STATUS_TOPIC || topic === FAULT_DISTANCE_TOPIC || topic === RELAY_TOPIC) {
+      renderSystemStatus();
     }
 
     // Persist every incoming message for Data History & Reports.
@@ -552,9 +574,10 @@
     state.unlockedAt = newLocked ? null : (time || new Date()).getTime();
 
     if (wasLocked && !newLocked) {
-      // Just authorized: gauges/table should show "no data yet" rather
-      // than a stale locked placeholder, until fresh values arrive.
-      GAUGE_CONFIGS.forEach((cfg) => gauges[cfg.topic] && gauges[cfg.topic].showWaiting());
+      // Just authorized: gauge/table/status should show "no data yet"
+      // rather than a stale locked placeholder, until fresh values arrive.
+      if (activeGauge) activeGauge.showWaiting();
+      renderSystemStatus();
       if (PROTECTED_TOPICS.has(historyTopicSelect.value)) {
         refreshHistoryTable();
       }
@@ -576,10 +599,8 @@
     PROTECTED_TOPICS.forEach((topic) => state.latestByTopic.delete(topic));
     renderSubscriptions();
 
-    GAUGE_CONFIGS.forEach((cfg) => {
-      const gauge = gauges[cfg.topic];
-      if (gauge) gauge.showLocked();
-    });
+    if (activeGauge) activeGauge.showLocked();
+    renderSystemStatus();
 
     if (state.lastReceived && PROTECTED_TOPICS.has(state.lastReceived.topic)) {
       state.lastReceived = null;
@@ -787,6 +808,100 @@
   }
 
   // ---------------------------------------------------------------------
+  // Live Meters: single-gauge selector
+  // ---------------------------------------------------------------------
+
+  function buildGaugeTabs() {
+    gaugeTabs.innerHTML = "";
+    GAUGE_CONFIGS.forEach((cfg) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "gauge-tab";
+      btn.textContent = cfg.label;
+      btn.dataset.topic = cfg.topic;
+      btn.addEventListener("click", () => selectGaugeTopic(cfg.topic));
+      gaugeTabs.appendChild(btn);
+    });
+    updateGaugeTabActiveState();
+  }
+
+  function updateGaugeTabActiveState() {
+    [...gaugeTabs.children].forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.topic === state.selectedGaugeTopic);
+    });
+  }
+
+  function mountGauge(topic) {
+    const cfg = GAUGE_CONFIGS.find((c) => c.topic === topic);
+    if (!cfg) return;
+
+    gaugeSingle.innerHTML = "";
+    activeGauge = createGauge(gaugeSingle, cfg);
+
+    if (state.isLocked) {
+      activeGauge.showLocked();
+      return;
+    }
+    const latest = state.latestByTopic.get(topic);
+    const num = latest ? parseFloat(latest.value) : NaN;
+    if (!Number.isNaN(num)) {
+      activeGauge.setValue(num);
+    } else {
+      activeGauge.showWaiting();
+    }
+  }
+
+  function selectGaugeTopic(topic) {
+    if (topic === state.selectedGaugeTopic) return;
+    state.selectedGaugeTopic = topic;
+    updateGaugeTabActiveState();
+    mountGauge(topic);
+  }
+
+  // ---------------------------------------------------------------------
+  // System Status panel (message-type topics: status/fault_distance/relay)
+  // ---------------------------------------------------------------------
+
+  function renderSystemStatus() {
+    if (state.isLocked) {
+      statusBadge.textContent = "🔒 Locked";
+      statusBadge.className = "status-badge locked";
+      faultDistanceValue.textContent = "🔒 Locked";
+      relayText.textContent = "🔒 Locked";
+      relayDot.classList.remove("on");
+      return;
+    }
+
+    const status = state.latestByTopic.get(STATUS_TOPIC);
+    const distance = state.latestByTopic.get(FAULT_DISTANCE_TOPIC);
+    const relay = state.latestByTopic.get(RELAY_TOPIC);
+
+    if (status) {
+      const val = status.value.trim().toUpperCase();
+      statusBadge.textContent = val;
+      let cls = "status-badge";
+      if (val === "NORMAL") cls += " badge-green";
+      else if (val === "VERIFYING") cls += " badge-yellow";
+      else cls += " badge-red"; // fault states, e.g. SHORT_CIRCUIT_FAULT / OPEN_CIRCUIT_FAULT
+      statusBadge.className = cls;
+    } else {
+      statusBadge.textContent = "—";
+      statusBadge.className = "status-badge";
+    }
+
+    faultDistanceValue.textContent = distance ? `${distance.value} ${UNIT_MAP[FAULT_DISTANCE_TOPIC]}` : "—";
+
+    if (relay) {
+      const on = relay.value.trim().toUpperCase() === "ON";
+      relayText.textContent = on ? "ON" : "OFF";
+      relayDot.classList.toggle("on", on);
+    } else {
+      relayText.textContent = "—";
+      relayDot.classList.remove("on");
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Debug panel
   // ---------------------------------------------------------------------
 
@@ -874,14 +989,6 @@
   // Init
   // ---------------------------------------------------------------------
 
-  function initGauges() {
-    GAUGE_CONFIGS.forEach((cfg) => {
-      const gauge = createGauge(gaugeGrid, cfg);
-      gauge.showLocked();
-      gauges[cfg.topic] = gauge;
-    });
-  }
-
   function init() {
     const settings = loadSettings();
     if (settings.host) hostInput.value = settings.host;
@@ -895,7 +1002,9 @@
     setConnectionUiState("disconnected");
     renderSubscriptions();
     renderMsgLog();
-    initGauges();
+    buildGaugeTabs();
+    mountGauge(state.selectedGaugeTopic);
+    renderSystemStatus();
     renderLockUi();
     updateDebugSubCount();
     populateHistoryTopicSelect();

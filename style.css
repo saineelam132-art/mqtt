@@ -267,11 +267,94 @@ button { font-family: inherit; cursor: pointer; }
   text-align: center;
 }
 
-/* Live Meters / gauges */
-.gauge-grid {
+/* System Status (message-type topics) */
+.status-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  gap: 14px;
+}
+
+.status-item {
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.status-item-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.status-value {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--field-border);
+  color: var(--text);
+}
+.status-badge.badge-green { background: rgba(52, 211, 153, 0.15); color: var(--green); }
+.status-badge.badge-yellow { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
+.status-badge.badge-red { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+.status-badge.locked { background: rgba(248, 113, 113, 0.1); color: var(--red); }
+
+.relay-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.relay-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--gray);
+  flex: none;
+}
+.relay-dot.on { background: var(--green); }
+
+/* Live Meters / gauges */
+.gauge-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.gauge-tab {
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.gauge-tab:hover { border-color: var(--text-muted); color: var(--text); }
+.gauge-tab.active {
+  background: rgba(45, 212, 191, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gauge-single-wrap {
+  display: flex;
+  justify-content: center;
 }
 
 .gauge-card {
@@ -590,7 +673,7 @@ tbody tr:last-child td { border-bottom: none; }
   .history-controls { grid-template-columns: 1fr 1fr; }
   .stat-cards { grid-template-columns: 1fr 1fr; }
   .debug-grid { grid-template-columns: 1fr; }
-  .gauge-grid { grid-template-columns: 1fr 1fr; }
+  .status-grid { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 480px) {
@@ -598,5 +681,5 @@ tbody tr:last-child td { border-bottom: none; }
   .history-controls { grid-template-columns: 1fr; }
   .stat-cards { grid-template-columns: 1fr; }
   .publish-form { flex-direction: column; }
-  .gauge-grid { grid-template-columns: 1fr; }
+  .status-grid { grid-template-columns: 1fr; }
 }
