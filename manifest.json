@@ -1,0 +1,25 @@
+{
+  "name": "MQTT Live Dashboard",
+  "short_name": "MQTT Dashboard",
+  "description": "Live MQTT dashboard for an ESP8266 transmission-line fault locator, with gauges, security lockdown, and history/PDF reports.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
