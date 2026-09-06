@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MQTT Live Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="app-header">
+    <div class="header-icon">📡</div>
+    <div>
+      <h1>MQTT Live Dashboard</h1>
+      <p class="subtitle">WebSocket streaming · no polling · no simulated data</p>
+    </div>
+  </header>
+
+  <!-- Connection Panel -->
+  <section class="card" id="connectionCard">
+    <div class="card-top-row">
+      <div class="status-line">
+        <span class="status-dot" id="connDot"></span>
+        <span class="status-label" id="connLabel">Disconnected</span>
+      </div>
+      <button class="link-btn" id="toggleSettingsBtn">Hide settings</button>
+    </div>
+
+    <div class="settings-grid" id="settingsForm">
+      <div class="field">
+        <label for="hostInput">Host</label>
+        <input id="hostInput" type="text" value="test.mosquitto.org">
+      </div>
+      <div class="field">
+        <label for="portInput">Port</label>
+        <input id="portInput" type="text" value="8081">
+      </div>
+      <div class="field">
+        <label for="pathInput">WebSocket Path</label>
+        <input id="pathInput" type="text" value="/mqtt">
+      </div>
+      <div class="field">
+        <label for="userInput">Username (optional)</label>
+        <input id="userInput" type="text">
+      </div>
+      <div class="field">
+        <label for="passInput">Password (optional)</label>
+        <input id="passInput" type="password">
+      </div>
+      <div class="field">
+        <label for="clientIdInput">Client ID (optional)</label>
+        <input id="clientIdInput" type="text" placeholder="auto-generated">
+      </div>
+
+      <div class="field tls-field">
+        <label class="checkbox-row">
+          <input id="tlsCheckbox" type="checkbox" checked>
+          Use TLS (wss)
+        </label>
+      </div>
+      <div class="field connect-btn-field">
+        <button class="btn-primary" id="connectBtn">Connect</button>
+      </div>
+    </div>
+
+    <div class="broker-url-row">
+      <span class="broker-url-label">Broker URL:</span>
+      <code id="brokerUrlPreview">wss://test.mosquitto.org:8081/mqtt</code>
+    </div>
+  </section>
+
+  <!-- Subscriptions Panel -->
+  <section class="card" id="subscriptionsCard">
+    <div class="card-top-row">
+      <h2>Subscriptions</h2>
+      <span class="link-btn" id="subsHint">connect to subscribe</span>
+    </div>
+    <div class="sub-input-row">
+      <input id="topicInput" type="text" placeholder="topic e.g. voltage_data">
+      <button class="btn-accent" id="addTopicBtn">+ Add</button>
+    </div>
+    <p class="empty-state" id="subsEmptyState">
+      No subscriptions yet. Connect and add a topic like <span class="highlight">voltage_data</span> to see live data.
+    </p>
+    <ul class="subs-list" id="subsList"></ul>
+  </section>
+
+  <!-- MQTT Security / Command Panel -->
+  <section class="card" id="securityCard">
+    <h2>MQTT Security / Command Panel</h2>
+
+    <div class="lock-status locked" id="lockStatus">
+      <span id="lockIcon">🔒</span> <span id="lockText">LOCKED</span>
+    </div>
+
+    <div class="publish-form">
+      <input id="pubTopicInput" type="text" placeholder="mahesh01/auth" value="mahesh01/auth">
+      <input id="pubMessageInput" type="text" placeholder="message / payload">
+      <button class="btn-accent" id="pubSendBtn">Send</button>
+    </div>
+
+    <button class="btn-secret" id="secretBtn">Send Secret Code</button>
+
+    <div class="msg-log-wrap">
+      <h3>MQTT Messages</h3>
+      <ul class="msg-log" id="msgLog"></ul>
+      <p class="empty-state small" id="msgLogEmpty">No messages yet.</p>
+    </div>
+  </section>
+
+  <!-- Data History & Reports Panel -->
+  <section class="card" id="historyCard">
+    <div class="card-title-row">
+      <span class="card-icon">🕓</span>
+      <h2>Data History &amp; Reports</h2>
+    </div>
+
+    <div class="history-controls">
+      <div class="field">
+        <label for="historyTopicSelect">Select Topic</label>
+        <select id="historyTopicSelect"></select>
+      </div>
+      <div class="field">
+        <label for="fromDateInput">From Date</label>
+        <input id="fromDateInput" type="date">
+      </div>
+      <div class="field">
+        <label for="toDateInput">To Date</label>
+        <input id="toDateInput" type="date">
+      </div>
+      <button class="btn-outline" id="refreshHistoryBtn">↻ Refresh</button>
+      <button class="btn-primary" id="downloadPdfBtn">⭳ Download PDF</button>
+    </div>
+
+    <div class="stat-cards">
+      <div class="stat-card">
+        <span class="stat-label">Total Records</span>
+        <span class="stat-value" id="statTotalRecords">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">First Recorded</span>
+        <span class="stat-value" id="statFirstRecorded">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Last Recorded</span>
+        <span class="stat-value" id="statLastRecorded">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Current Value</span>
+        <span class="stat-value" id="statCurrentValue">—</span>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="historyTable">
+        <thead>
+          <tr><th>Date</th><th>Time</th><th>Value</th><th>Unit</th></tr>
+        </thead>
+        <tbody id="historyTableBody"></tbody>
+      </table>
+      <p class="empty-state small" id="historyEmptyState">No records for this topic yet.</p>
+    </div>
+  </section>
+
+  <!-- MQTT Debug Panel -->
+  <section class="card" id="debugCard">
+    <button class="card-toggle" id="debugToggle">
+      <span>MQTT Debug</span><span class="chevron" id="debugChevron">▾</span>
+    </button>
+    <div class="debug-grid" id="debugBody">
+      <div class="stat-card">
+        <span class="stat-label">Connection Status</span>
+        <span class="stat-value" id="debugConnStatus">disconnected</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Broker URL</span>
+        <span class="stat-value" id="debugBrokerUrl">wss://test.mosquitto.org:8081/mqtt</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Subscribed Topics</span>
+        <span class="stat-value" id="debugSubCount">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Last Received Topic</span>
+        <span class="stat-value" id="debugLastTopic">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Last Received Value</span>
+        <span class="stat-value" id="debugLastValue">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Last Message Time</span>
+        <span class="stat-value" id="debugLastTime">—</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Secret code modal -->
+<div class="modal-overlay hidden" id="secretModalOverlay">
+  <div class="modal">
+    <h3>Send Secret Code</h3>
+    <p class="modal-sub">Publishes to <code>mahesh01/auth</code></p>
+    <input id="secretCodeInput" type="password" placeholder="Enter secret code" autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn-outline" id="secretCancelBtn">Cancel</button>
+      <button class="btn-accent" id="secretSendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
