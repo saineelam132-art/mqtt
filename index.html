@@ -70,6 +70,17 @@
     </div>
   </section>
 
+  <!-- Security lockdown banner (shown whenever the system is locked) -->
+  <div class="security-banner hidden" id="securityBanner">
+    🔒 System is in Security Mode — enter the secret code below to view data.
+  </div>
+
+  <!-- Live Meters Panel -->
+  <section class="card" id="liveMetersCard">
+    <h2>Live Meters</h2>
+    <div class="gauge-grid" id="gaugeGrid"></div>
+  </section>
+
   <!-- Subscriptions Panel -->
   <section class="card" id="subscriptionsCard">
     <div class="card-top-row">
@@ -216,6 +227,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="gauge.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

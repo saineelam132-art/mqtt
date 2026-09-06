@@ -47,6 +47,40 @@
 
   const MAX_LOG_MESSAGES = 20;
 
+  // Topics whose data must be fully hidden/discarded while the system is
+  // locked (Security Mode) — gauges, history table, stat cards and the
+  // debug panel all treat these specially.
+  const PROTECTED_TOPICS = new Set([
+    "mahesh01/transmission/input_voltage",
+    "mahesh01/transmission/load_voltage",
+    "mahesh01/transmission/fault_current",
+    "mahesh01/transmission/load_current",
+    "mahesh01/transmission/power",
+    "mahesh01/transmission/energy",
+    "mahesh01/transmission/cost",
+    "mahesh01/transmission/status",
+    "mahesh01/transmission/fault_distance",
+    "mahesh01/transmission/relay",
+  ]);
+
+  const DEFAULT_ZONES = [
+    { from: 0, to: 0.7, color: "#34d399" },
+    { from: 0.7, to: 0.9, color: "#fbbf24" },
+    { from: 0.9, to: 1, color: "#f87171" },
+  ];
+  const FAULT_CURRENT_ZONES = [
+    { from: 0, to: 0.5 / 3, color: "#34d399" },
+    { from: 0.5 / 3, to: 1, color: "#f87171" },
+  ];
+
+  const GAUGE_CONFIGS = [
+    { topic: "mahesh01/transmission/input_voltage", label: "Input Voltage", min: 0, max: 15, unit: "V", zones: DEFAULT_ZONES },
+    { topic: "mahesh01/transmission/load_voltage", label: "Load Voltage", min: 0, max: 15, unit: "V", zones: DEFAULT_ZONES },
+    { topic: "mahesh01/transmission/load_current", label: "Load Current", min: 0, max: 3, unit: "A", zones: DEFAULT_ZONES },
+    { topic: "mahesh01/transmission/fault_current", label: "Fault Current", min: 0, max: 3, unit: "A", zones: FAULT_CURRENT_ZONES },
+    { topic: "mahesh01/transmission/power", label: "Power", min: 0, max: 50, unit: "W", zones: DEFAULT_ZONES },
+  ];
+
   // ---------------------------------------------------------------------
   // IndexedDB message history store
   // ---------------------------------------------------------------------
@@ -171,6 +205,9 @@
   const toggleSettingsBtn = el("toggleSettingsBtn");
   const settingsForm = el("settingsForm");
 
+  const securityBanner = el("securityBanner");
+  const gaugeGrid = el("gaugeGrid");
+
   const topicInput = el("topicInput");
   const addTopicBtn = el("addTopicBtn");
   const subsEmptyState = el("subsEmptyState");
@@ -226,9 +263,15 @@
     subscriptions: loadSubscriptions(),
     latestByTopic: new Map(), // topic -> { value, time }
     logMessages: [], // { dir: 'out'|'in', topic, payload, time }
-    lockUnlocked: false,
+    // Never assume unlocked: locked by default until a real status message
+    // says otherwise, on page load and again on every fresh connect.
+    isLocked: true,
+    unlockedAt: null, // ms timestamp of the most recent unlock, for history filtering
     lastReceived: null, // { topic, value, time }
   };
+
+  const gauges = {}; // topic -> gauge instance from createGauge()
+  const HISTORY_EMPTY_DEFAULT_TEXT = "No records for this topic yet.";
 
   // ---------------------------------------------------------------------
   // Helpers
@@ -343,6 +386,10 @@
       settingsForm.classList.add("hidden");
       toggleSettingsBtn.textContent = "Show settings";
 
+      // Never assume unlocked on a fresh connection: reset to locked and
+      // wipe any protected data until a real status message arrives.
+      resetSecurityState();
+
       // Re-subscribe to persisted user subscriptions.
       state.subscriptions.forEach((topic) => client.subscribe(topic));
       // Auto-subscribe to the security/status topics so the Security panel
@@ -366,6 +413,7 @@
     client.on("close", () => {
       state.connected = false;
       setConnectionUiState("disconnected");
+      resetSecurityState();
     });
   }
 
@@ -376,21 +424,37 @@
     }
     state.connected = false;
     setConnectionUiState("disconnected");
+    resetSecurityState();
   }
 
   function handleIncomingMessage(topic, payload, time) {
+    // The lock state is derived from this topic first, so the discard
+    // check below (state.isLocked) always reflects the latest status.
+    if (topic === STATUS_TOPIC) {
+      const normalized = (payload || "").trim().toUpperCase();
+      setLocked(!UNLOCKED_STATUS_VALUES.has(normalized), time);
+    }
+
+    // The Security/Command Panel's own log is never hidden, even while
+    // locked — it's the mechanism for observing/recovering from lockdown.
+    if (SECURITY_TOPICS.includes(topic)) {
+      pushLogMessage({ dir: "in", topic, payload, time });
+    }
+
+    if (PROTECTED_TOPICS.has(topic) && state.isLocked) {
+      return; // discard: never store or display protected data while locked
+    }
+
     state.latestByTopic.set(topic, { value: payload, time });
     state.lastReceived = { topic, value: payload, time };
 
     updateDebugLastReceived(topic, payload, time);
     renderSubscriptions();
 
-    if (topic === STATUS_TOPIC) {
-      updateLockStatus(payload);
-    }
-
-    if (SECURITY_TOPICS.includes(topic)) {
-      pushLogMessage({ dir: "in", topic, payload, time });
+    const gauge = gauges[topic];
+    if (gauge) {
+      const num = parseFloat(payload);
+      if (!Number.isNaN(num)) gauge.setValue(num);
     }
 
     // Persist every incoming message for Data History & Reports.
@@ -476,14 +540,64 @@
   // Security / Command panel
   // ---------------------------------------------------------------------
 
-  function updateLockStatus(statusValue) {
-    const normalized = (statusValue || "").trim().toUpperCase();
-    const unlocked = UNLOCKED_STATUS_VALUES.has(normalized);
-    state.lockUnlocked = unlocked;
+  function setLocked(newLocked, time) {
+    const wasLocked = state.isLocked;
+    state.isLocked = newLocked;
+
+    if (!wasLocked && newLocked) {
+      // Mode flipped back to security mode mid-session: wipe everything
+      // protected immediately, don't wait for a refresh.
+      clearProtectedState();
+    }
+    state.unlockedAt = newLocked ? null : (time || new Date()).getTime();
+
+    if (wasLocked && !newLocked) {
+      // Just authorized: gauges/table should show "no data yet" rather
+      // than a stale locked placeholder, until fresh values arrive.
+      GAUGE_CONFIGS.forEach((cfg) => gauges[cfg.topic] && gauges[cfg.topic].showWaiting());
+      if (PROTECTED_TOPICS.has(historyTopicSelect.value)) {
+        refreshHistoryTable();
+      }
+    }
+
+    renderLockUi();
+  }
+
+  function renderLockUi() {
+    const unlocked = !state.isLocked;
     lockStatus.classList.toggle("locked", !unlocked);
     lockStatus.classList.toggle("unlocked", unlocked);
     lockIcon.textContent = unlocked ? "🔓" : "🔒";
     lockText.textContent = unlocked ? "UNLOCKED" : "LOCKED";
+    securityBanner.classList.toggle("hidden", unlocked);
+  }
+
+  function clearProtectedState() {
+    PROTECTED_TOPICS.forEach((topic) => state.latestByTopic.delete(topic));
+    renderSubscriptions();
+
+    GAUGE_CONFIGS.forEach((cfg) => {
+      const gauge = gauges[cfg.topic];
+      if (gauge) gauge.showLocked();
+    });
+
+    if (state.lastReceived && PROTECTED_TOPICS.has(state.lastReceived.topic)) {
+      state.lastReceived = null;
+      debugLastTopic.textContent = "🔒 Locked";
+      debugLastValue.textContent = "🔒 Locked";
+      debugLastTime.textContent = "—";
+    }
+
+    if (PROTECTED_TOPICS.has(historyTopicSelect.value)) {
+      refreshHistoryTable();
+    }
+  }
+
+  function resetSecurityState() {
+    state.isLocked = true;
+    state.unlockedAt = null;
+    clearProtectedState();
+    renderLockUi();
   }
 
   function pushLogMessage(entry) {
@@ -562,11 +676,33 @@
     addHistorySelectOption(topic);
   }
 
+  function renderHistoryLockedPlaceholder() {
+    historyTableBody.innerHTML = "";
+    historyTable.classList.add("hidden");
+    historyEmptyState.textContent = "🔒 Locked — authorize with the secret code to view history for this topic.";
+    historyEmptyState.classList.remove("hidden");
+    statTotalRecords.textContent = "🔒";
+    statFirstRecorded.textContent = "🔒 Locked";
+    statLastRecorded.textContent = "🔒 Locked";
+    statCurrentValue.textContent = "🔒 Locked";
+  }
+
   async function refreshHistoryTable() {
     const topic = historyTopicSelect.value;
     if (!topic) return;
 
+    const isProtected = PROTECTED_TOPICS.has(topic);
+    if (isProtected && state.isLocked) {
+      renderHistoryLockedPlaceholder();
+      return { topic, unit: UNIT_MAP[topic] || "", records: [], locked: true };
+    }
+
     let records = await getMessagesForTopic(topic);
+
+    // Never retroactively reveal data that arrived before this unlock.
+    if (isProtected && state.unlockedAt) {
+      records = records.filter((r) => r.timestamp >= state.unlockedAt);
+    }
 
     const fromVal = fromDateInput.value ? new Date(fromDateInput.value + "T00:00:00") : null;
     const toVal = toDateInput.value ? new Date(toDateInput.value + "T23:59:59.999") : null;
@@ -579,6 +715,7 @@
 
     historyTableBody.innerHTML = "";
     if (records.length === 0) {
+      historyEmptyState.textContent = HISTORY_EMPTY_DEFAULT_TEXT;
       historyEmptyState.classList.remove("hidden");
       historyTable.classList.add("hidden");
     } else {
@@ -614,6 +751,10 @@
 
   async function downloadHistoryPdf() {
     const data = await refreshHistoryTable();
+    if (data && data.locked) {
+      showToast("System is locked — cannot export protected data.");
+      return;
+    }
     if (!data || data.records.length === 0) {
       showToast("No records to export for this topic.");
       return;
@@ -733,6 +874,14 @@
   // Init
   // ---------------------------------------------------------------------
 
+  function initGauges() {
+    GAUGE_CONFIGS.forEach((cfg) => {
+      const gauge = createGauge(gaugeGrid, cfg);
+      gauge.showLocked();
+      gauges[cfg.topic] = gauge;
+    });
+  }
+
   function init() {
     const settings = loadSettings();
     if (settings.host) hostInput.value = settings.host;
@@ -746,7 +895,8 @@
     setConnectionUiState("disconnected");
     renderSubscriptions();
     renderMsgLog();
-    updateLockStatus(null);
+    initGauges();
+    renderLockUi();
     updateDebugSubCount();
     populateHistoryTopicSelect();
 
